@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Oratória | Live</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #f8fafc; }
+        .card { background: white; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); padding: 1.5rem; }
+    </style>
+</head>
+<body>
+
+    <div id="loading" class="fixed inset-0 bg-white z-50 flex flex-col items-center justify-center">
+        <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+        <p class="mt-4 text-gray-600 font-medium">Sincronizando com a Planilha Google...</p>
+    </div>
+
+    <header class="bg-slate-900 text-white p-6 shadow-md">
+        <div class="container mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
+            <div>
+                <h1 class="text-2xl font-bold flex items-center gap-2">
+                    <i class="fas fa-chart-line text-blue-400"></i> Analytics Oratória
+                </h1>
+                <p class="text-slate-400 text-sm">Dashboard em Tempo Real</p>
+            </div>
+            
+            <div class="flex items-center gap-3">
+                <select id="presenterSelect" class="bg-slate-800 text-white px-4 py-2 rounded-lg border border-slate-700 focus:ring-2 focus:ring-blue-500 outline-none" onchange="updateDashboard()">
+                    <option value="all">Todos os Apresentadores</option>
+                </select>
+                <button onclick="fetchData()" class="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg font-semibold transition flex items-center gap-2">
+                    <i class="fas fa-sync-alt"></i> Atualizar
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="container mx-auto p-6 space-y-6">
+        
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div class="card border-l-4 border-blue-500">
+                <p class="text-slate-500 text-xs font-bold uppercase">Média Geral</p>
+                <div id="kpiAvg" class="text-3xl font-bold text-slate-800">0.00</div>
+            </div>
+            <div class="card border-l-4 border-emerald-500">
+                <p class="text-slate-500 text-xs font-bold uppercase">Total Avaliações</p>
+                <div id="kpiCount" class="text-3xl font-bold text-slate-800">0</div>
+            </div>
+            <div class="card border-l-4 border-amber-500">
+                <p class="text-slate-500 text-xs font-bold uppercase">Ponto Forte</p>
+                <div id="kpiBest" class="text-sm font-bold text-slate-700 mt-2 truncate">-</div>
+            </div>
+            <div class="card border-l-4 border-rose-500">
+                <p class="text-slate-500 text-xs font-bold uppercase">Ponto a Melhorar</p>
+                <div id="kpiWorst" class="text-sm font-bold text-slate-700 mt-2 truncate">-</div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div class="card">
+                <h3 class="font-bold text-slate-700 mb-4 flex items-center gap-2">
+                    <i class="fas fa-bullseye text-blue-500"></i> Radar de Competências
+                </h3>
+                <div class="h-[350px]"><canvas id="radarChart"></canvas></div>
+            </div>
+            <div class="card">
+                <h3 class="font-bold text-slate-700 mb-4 flex items-center gap-2">
+                    <i class="fas fa-trophy text-amber-500"></i> Ranking de Performance
+                </h3>
+                <div class="h-[350px]"><canvas id="barChart"></canvas></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3 class="font-bold text-slate-700 mb-4">Feedbacks Recentes</h3>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="bg-slate-50 text-slate-600 text-xs font-bold uppercase">
+                            <th class="p-4 border-b">Apresentador</th>
+                            <th class="p-4 border-b">Avaliador</th>
+                            <th class="p-4 border-b">Média</th>
+                            <th class="p-4 border-b w-1/2">Observações</th>
+                        </tr>
+                    </thead>
+                    <tbody id="feedbackTableBody" class="text-sm divide-y"></tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        // SEU LINK DE PUBLICAÇÃO COM CACHE BUSTER
+        const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQTQRyin4iTUkqg1T-cqr4SyuOo3t0kdUZTFvz9ggZV5BrO44D1mi_dp3CNoT1TDdir2Gduj8sMuGMz/pub?output=csv&cachebust=" + new Date().getTime();
+
+        let globalData = [];
+        let radarChartInstance = null;
+        let barChartInstance = null;
+
+        // Mapeamento baseado na sua planilha
+        const COLS = { APRESENTADOR: 3, AVALIADOR: 1, INICIO_NOTAS: 5, FIM_NOTAS: 16, FEEDBACK: 17 };
+        const LABELS = ["Apres.", "Clareza", "Org.", "Encerr.", "Linguagem", "Voz", "Nat.", "Postura", "Nervos.", "Empatia", "Tempo", "Leitura"];
+
+        document.addEventListener('DOMContentLoaded', fetchData);
+
+        function fetchData() {
+            document.getElementById('loading').style.display = 'flex';
+            Papa.parse(CSV_URL, {
+                download: true,
+                header: false,
+                skipEmptyLines: true,
+                complete: function(results) {
+                    processData(results.data);
+                    document.getElementById('loading').style.display = 'none';
+                }
+            });
+        }
+
+        function processData(rows) {
+            // Ignora o cabeçalho e filtra linhas sem apresentador
+            const dataRows = rows.slice(1).filter(r => r[COLS.APRESENTADOR]);
+            
+            globalData = dataRows.map(row => {
+                let scores = [];
+                for(let i = COLS.INICIO_NOTAS; i <= COLS.FIM_NOTAS; i++) {
+                    let v = parseFloat(row[i] ? row[i].toString().replace(',', '.') : 0);
+                    scores.push(isNaN(v) ? 0 : v);
+                }
+                return {
+                    name: row[COLS.APRESENTADOR].trim(),
+                    eval: row[COLS.AVALIADOR],
+                    scores: scores,
+                    avg: scores.reduce((a,b)=>a+b,0) / scores.length,
+                    comment: row[COLS.FEEDBACK] || "-"
+                };
+            });
+
+            fillSelect();
+            updateDashboard();
+        }
+
+        function fillSelect() {
+            const select = document.getElementById('presenterSelect');
+            const currentVal = select.value;
+            const names = [...new Set(globalData.map(d => d.name))].sort();
+            
+            select.innerHTML = '<option value="all">Todos os Apresentadores</option>';
+            names.forEach(n => {
+                let opt = document.createElement('option');
+                opt.value = n; opt.innerText = n;
+                select.appendChild(opt);
+            });
+            select.value = currentVal;
+        }
+
+        function updateDashboard() {
+            const filter = document.getElementById('presenterSelect').value;
+            const filtered = filter === 'all' ? globalData : globalData.filter(d => d.name === filter);
+
+            // KPIs
+            const totalAvg = filtered.length ? (filtered.reduce((a,b)=>a+b.avg,0)/filtered.length).toFixed(2) : "0.00";
+            document.getElementById('kpiAvg').innerText = totalAvg;
+            document.getElementById('kpiCount').innerText = filtered.length;
+
+            let catSums = new Array(12).fill(0);
+            filtered.forEach(d => d.scores.forEach((v,i) => catSums[i]+=v));
+            let catAvgs = catSums.map(v => filtered.length ? v/filtered.length : 0);
+
+            document.getElementById('kpiBest').innerText = LABELS[catAvgs.indexOf(Math.max(...catAvgs))] || "-";
+            document.getElementById('kpiWorst').innerText = LABELS[catAvgs.indexOf(Math.min(...catAvgs.filter(v=>v>0)))] || "-";
+
+            renderCharts(catAvgs, filter);
+            renderTable(filtered);
+        }
+
+        function renderCharts(currentAvgs, filter) {
+            // Radar Chart
+            const ctxR = document.getElementById('radarChart').getContext('2d');
+            if(radarChartInstance) radarChartInstance.destroy();
+            radarChartInstance = new Chart(ctxR, {
+                type: 'radar',
+                data: {
+                    labels: LABELS,
+                    datasets: [{
+                        label: filter === 'all' ? 'Média da Turma' : filter,
+                        data: currentAvgs,
+                        backgroundColor: 'rgba(37, 99, 235, 0.2)',
+                        borderColor: '#2563eb',
+                        pointBackgroundColor: '#2563eb'
+                    }]
+                },
+                options: { maintainAspectRatio: false, scales: { r: { min: 0, max: 5 } } }
+            });
+
+            // Bar Ranking Chart
+            const ranking = {};
+            globalData.forEach(d => {
+                if(!ranking[d.name]) ranking[d.name] = {s:0, c:0};
+                ranking[d.name].s += d.avg; ranking[d.name].c++;
+            });
+            const sorted = Object.keys(ranking).map(k => ({n: k, v: ranking[k].s/ranking[k].c})).sort((a,b)=>b.v-a.v);
+
+            const ctxB = document.getElementById('barChart').getContext('2d');
+            if(barChartInstance) barChartInstance.destroy();
+            barChartInstance = new Chart(ctxB, {
+                type: 'bar',
+                data: {
+                    labels: sorted.map(i => i.n),
+                    datasets: [{ label: 'Média Final', data: sorted.map(i => i.v), backgroundColor: '#10b981' }]
+                },
+                options: { indexAxis: 'y', maintainAspectRatio: false, plugins: { legend: { display: false } } }
+            });
+        }
+
+        function renderTable(data) {
+            const tbody = document.getElementById('feedbackTableBody');
+            tbody.innerHTML = '';
+            data.slice(-20).reverse().forEach(d => {
+                tbody.innerHTML += `<tr>
+                    <td class="p-4 font-bold text-slate-700">${d.name}</td>
+                    <td class="p-4 text-slate-500">${d.eval}</td>
+                    <td class="p-4"><span class="px-2 py-1 bg-blue-100 text-blue-700 rounded font-bold">${d.avg.toFixed(1)}</span></td>
+                    <td class="p-4 text-slate-400 italic text-xs leading-relaxed">"${d.comment}"</td>
+                </tr>`;
+            });
+        }
+    </script>
+</body>
+</html>
