@@ -80,6 +80,11 @@
             </div>
         </div>
 
+        <div class="card">
+            <h3 class="font-bold text-slate-700 mb-4 flex items-center gap-2">Médias por Tema</h3>
+            <div class="h-[350px]"><canvas id="topicChart"></canvas></div>
+        </div>
+
         <div class="card overflow-hidden">
             <h3 class="font-bold text-slate-700 mb-4">Detalhamento dos Temas e Feedbacks</h3>
             <div class="overflow-x-auto">
@@ -105,6 +110,7 @@
         let globalData = [];
         let radarChartInstance = null;
         let barChartInstance = null;
+        let topicChartInstance = null;
 
         // MAPEAMENTO DAS COLUNAS (Baseado na sua planilha)
         const COLS = { 
@@ -112,10 +118,10 @@
             APRESENTADOR: 3, 
             TEMA: 4, // Coluna E
             INICIO_NOTAS: 5, 
-            FIM_NOTAS: 16, 
+            FIM_NOTAS: 25, 
             FEEDBACK: 17 
         };
-        const LABELS = ["Apres.", "Clareza", "Org.", "Encerr.", "Linguagem", "Voz", "Nat.", "Postura", "Nervos.", "Empatia", "Tempo", "Leitura"];
+        let LABELS = [];
 
         document.addEventListener('DOMContentLoaded', fetchData);
 
@@ -133,6 +139,18 @@
         }
 
         function processData(rows) {
+            const headerRow = rows[0] || [];
+            LABELS = headerRow.slice(COLS.INICIO_NOTAS, COLS.FIM_NOTAS + 1).map((v, i) => {
+                const label = (v || '').toString().trim();
+                return label ? label : `Col ${COLS.INICIO_NOTAS + i + 1}`;
+            });
+
+            const feedbackColIndex = headerRow.findIndex(v => {
+                const value = (v || '').toString().trim().toLowerCase();
+                return value === 'feedback' || value === 'observação' || value === 'observacao' || value === 'comentário' || value === 'comentario';
+            });
+            const feedbackCol = feedbackColIndex !== -1 ? feedbackColIndex : COLS.FEEDBACK;
+
             const dataRows = rows.slice(1).filter(r => r[COLS.APRESENTADOR]);
             
             globalData = dataRows.map(row => {
@@ -147,7 +165,7 @@
                     eval: row[COLS.AVALIADOR],
                     scores: scores,
                     avg: scores.reduce((a,b)=>a+b,0) / scores.length,
-                    comment: row[COLS.FEEDBACK] || "-"
+                    comment: row[feedbackCol] || "-"
                 };
             });
 
@@ -197,7 +215,7 @@
             document.getElementById('kpiAvg').innerText = totalAvg;
             document.getElementById('kpiCount').innerText = filtered.length;
 
-            let catSums = new Array(12).fill(0);
+            let catSums = new Array(LABELS.length).fill(0);
             filtered.forEach(d => d.scores.forEach((v,i) => catSums[i]+=v));
             let catAvgs = catSums.map(v => filtered.length ? v/filtered.length : 0);
 
@@ -210,6 +228,7 @@
             }
 
             renderCharts(catAvgs, nameFilter);
+            renderTopicChart(filtered);
             renderTable(filtered);
         }
 
@@ -248,7 +267,57 @@
                     labels: sorted.map(i => i.n),
                     datasets: [{ label: 'Média Acumulada', data: sorted.map(i => i.v), backgroundColor: '#10b981' }]
                 },
-                options: { indexAxis: 'y', maintainAspectRatio: false, plugins: { legend: { display: false } } }
+                options: {
+                    indexAxis: 'y',
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        y: {
+                            ticks: {
+                                autoSkip: false,
+                                font: { size: 10 }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function renderTopicChart(filteredData) {
+            const topicAgg = {};
+            filteredData.forEach(d => {
+                if(!topicAgg[d.topic]) topicAgg[d.topic] = {s:0, c:0};
+                topicAgg[d.topic].s += d.avg;
+                topicAgg[d.topic].c++;
+            });
+
+            const sorted = Object.keys(topicAgg)
+                .map(k => ({t: k, v: topicAgg[k].s / topicAgg[k].c}))
+                .sort((a,b)=>a.t.localeCompare(b.t, 'pt-BR'));
+
+            const ctxT = document.getElementById('topicChart').getContext('2d');
+            if(topicChartInstance) topicChartInstance.destroy();
+            topicChartInstance = new Chart(ctxT, {
+                type: 'bar',
+                data: {
+                    labels: sorted.map(i => i.t),
+                    datasets: [{ label: 'Média por Tema', data: sorted.map(i => i.v), backgroundColor: '#3b82f6' }]
+                },
+                options: {
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: {
+                            ticks: {
+                                autoSkip: false,
+                                maxRotation: 45,
+                                minRotation: 0,
+                                font: { size: 10 }
+                            }
+                        },
+                        y: { beginAtZero: true, max: 5 }
+                    }
+                }
             });
         }
 
